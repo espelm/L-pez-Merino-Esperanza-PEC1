@@ -1,0 +1,154 @@
+---
+title: "PEC1_ELM_informe"
+author: "Esperanza López Merino"
+date: "2025-04-01"
+output: html_document
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r libraries, include = FALSE}
+library(git2r)
+library(utils)
+library(readxl)
+library(SummarizedExperiment)
+library(DESeq2)
+```
+
+Empezaremos por descargar los datos del repositorio de git recomendado. Hemos seleccionado los datos de fosfoproteómica. 
+
+```{r}
+#data_url <- "https://github.com/nutrimetabolomics/metaboData/blob/main/Datasets/2018-Phosphoproteomics/TIO2%2BPTYR-human-MSS%2BMSIvsPD.XLSX"
+#download.file(data_url, "phosphoproteomics_data.xlsx", mode = "wb")
+#description_url <- "https://github.com/nutrimetabolomics/metaboData/blob/main/Datasets/2018-Phosphoproteomics/description.md"
+#download.file(description_url, "description.md", mode = "wb")
+```
+Una vez descargados los datos pasamos a cargarlos en R. Sin embargo, los archivos descargados parece que dan problemas para abrirse. Para bypassear el problema he descargado manualmente los archivos desde el repositorio y sustituido los descargados. 
+Como el archivo excel tiene dos pestañas las cargaremos por separado.
+```{r}
+phospho_data <- read_excel("phosphoproteomics_data.xlsx", sheet = "originalData")
+head(phospho_data)
+str(phospho_data)
+samples <- read_excel("phosphoproteomics_data.xlsx", sheet = "targets")
+head(samples)
+str(samples)
+description <- readLines("description.md")
+```
+Pasamos a crear el objeto de la clase SumarizedExperiment. Para ello debemos quedarnos con los datos de los niveles de fosfopéptidos de las muestras (para filtrarlos,  usaremos que son las únicas columnas que empiezan por m o t). Además, crearemos los metadatos de las muestras (nombre, grupo de tratamiento y réplica) y los metadatos de los péptidos (péptido, accession number, descripción y score de la identificación del peptido)
+
+```{r}
+abundance_colums <- grep("^M|^T", colnames(phospho_data), value = TRUE)  #muestras
+abundance_data <- phospho_data[, abundance_colums]  #datos
+
+samples_metadata <- data.frame(
+  Sample = colnames(abundance_data),
+  Group = ifelse(grepl("^M1|^M5|^T49", colnames(abundance_data)), "MSS", "PD"),
+  Replicate = rep(c(1,2), times = 6),  # Dos réplicas por muestra
+  stringsAsFactors = FALSE)
+
+peptides_metadata <- data.frame(
+  Peptide = phospho_data$SequenceModifications,
+  Accession = phospho_data$Accession,
+  Description = phospho_data$Description,
+  Score = phospho_data$Score, 
+  stringsAsFactors = FALSE)
+
+phospho_se <- SummarizedExperiment(
+  assays = list(counts = as.matrix(abundance_data)),  # Datos de abundancia
+  colData = DataFrame(samples_metadata),  # Metadatos de las muestras
+  rowData = DataFrame(peptides_metadata),  # Metadatos de las caracteristicas
+  metadata = description) #Metadatos del experimento
+summary(phospho_se)
+dim(phospho_se)
+colData(phospho_se)
+rowData(phospho_se)
+metadata(phospho_se)
+
+```
+Una vez comprobado que el objeto SummarizedExperiment se ha creado correctamente, empezamos a explorar los datos para ver si es necesario hacer algún preprocesado (seguramente se haya hecho ya antes de subirlos al repositorio) antes de hacer el análisis estadístico (fuera de los objetivos de esta PEC). 
+
+```{r}
+boxplot(assay(phospho_se), 
+        main = "Distribución de abundancias de péptidos en las muestras", 
+        las = 2,  # Rotar los nombres de las muestras
+        col = c(rep("skyblue", 6), rep("salmon", 6)),  # Colores por grupo (MSS y PD)
+        ylab = "Abundancia",
+        cex.axis = 0.6)
+      
+```
+Podemos ver que hay bastanes puntos fuera de los bigotes (de hecho no vemos ni las cajas ni los bigotes), lo que probablemente puedan ser outliers. Valdría la pena revisar si estos puntos se conservan en las replicas técnicas (es más probable que representen variabilidad biológica) o bien puedan deberse a errores técnicos. 
+
+Aunque no es correcto, con fines exploratorios eliminaremos los outliers para ver bien las cajas y los bigotes.
+
+```{r}
+boxplot(assay(phospho_se), 
+        main = "Distribución de abundancias de péptidos en las muestras", 
+        las = 2,  # Rotar los nombres de las muestras
+        col = c(rep("skyblue", 6), rep("salmon", 6)),  # Colores por grupo (MSS y PD)
+        ylab = "Abundancia",
+        cex.axis = 0.6,
+        outline = FALSE)
+      
+```
+Así podemos ver que en general las muestras del grupo PD parecen tener más variabilidad (salvo las MSS T49) y tal vez unos mayores niveles de fosfoproteínas.
+```{r}
+abundance_data <- assay(phospho_se)
+group_labels <- colData(phospho_se)$Group  
+mean_MSS <- rowMeans(abundance_data[, group_labels == "MSS"], na.rm = TRUE)
+mean_PD <- rowMeans(abundance_data[, group_labels == "PD"], na.rm = TRUE)
+mean_abundance <- data.frame(
+  MSS = mean_MSS,
+  PD = mean_PD)
+boxplot(mean_abundance, 
+        main = "Abundancias medias de péptidos en las muestras", 
+        las = 2,  # Rotar los nombres de las muestras
+        col = c("skyblue","salmon"),  # Colores por grupo (MSS y PD)
+        ylab = "Abundancia",
+        cex.axis = 0.6,
+        outline = FALSE)
+```
+```{r}
+shapiro.test(mean_abundance$MSS)
+shapiro.test(mean_abundance$PD)
+wilcox.test(mean_abundance$MSS, mean_abundance$PD)
+```
+Vemos que los datos no son normales, pero sí que podemos detectar una diferencia en la abundancia de fosfoproteínas en ambos grupos
+
+
+
+
+Posteriormente nos propusimos hacer un PCA, pero para ello debemos elimianr NA y 0 (mide la variación, si hay muchas columnas con varianza 0 es un problema)
+
+```{r}
+#pca_result <- prcomp(t(assay(phospho_se)), center = TRUE, scale. = TRUE)
+na_count <- sum(is.na(assay(phospho_se)))
+na_count
+cero_count <- sum(assay(phospho_se) == 0)
+cero_count
+
+```
+
+```{r}
+# Para hacer un mapa de calor, primero necesitamos normalizar los datos (opcional)
+library(pheatmap)
+heatmap_data <- t(scale(t(abundance_data)))  # Escalado de las abundancias por péptido
+
+# Mapa de calor de las abundancias
+
+```
+PCA: Para observar la variabilidad de los datos y detectar patrones o posibles outliers.
+
+ANOVA: Para comprobar si existen diferencias significativas en las abundancias de fosfoproteínas entre los grupos (MSS vs PD).
+
+Volcano plot: Para visualizar los resultados del ANOVA y resaltar los péptidos significativos.
+
+```{r}
+save(phospho_se, file = "phospho_se.Rda")
+write.csv(assay(phospho_se), file = "phospho_abundance_data.csv", row.names = FALSE)
+```
+
+
