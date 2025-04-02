@@ -1,0 +1,227 @@
+---
+title: "PEC1 Informe"
+author: "Esperanza López Merino"
+date: "2025-04-01"
+bibliography: bib.bib
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r libraries, include = FALSE}
+library(git2r)
+library(utils)
+library(readxl)
+library(SummarizedExperiment)
+library(DESeq2)
+```
+
+# Resumen
+
+En esta PEC hemos trabajado con unos datos de fosfoproteómica que, una vez nos hemos familiarizado brevemente con su estructura, hemos convertido en un objeto del tipo SummarizedExperiment. Una vez creado el objeto hemos hecho una exploración inicial de los datos identificando algunos puntos importantes a tener en cuenta durante el preprocesado. La mitad de las réplicas técnicas tienen una correlación superior al 90%, no obstante, la otra mitad muestra una correlación inferior al 75%.  En esta línea, parece haber también valores iguales al 0 exacto (aunque en una pequeña proporción), lo cual habría que revisar pues probablemente se deba a la técnica. Atajar estas cuestiones estableciendo criterios objetivos de filtrado es importante para asegurarnos de la fiabilidad de los resultados que se obtengan en análisis posteriores. 
+
+# Objetivos 
+
+El objetivo principal de este trabajo es hacer una exploración inicial de los datos de fosfoproteómica proporcionados para familiarizarse con Bioconductor, git y el manejo de este tipo de datos en R. No obstante, el objetivo principal del estudio era determinar si existen diferencias en los patrones de fosforilacion de dos modelos PDX (patient-derived xenograft) derivados de tumores humanos, los cuales pueden ser una nueva aproximación en la terapia del cancer [@liu2023patient]. Con esto, planteamos los siguientes objetivos especificos: 
+
+* Obtener los ficheros y cargarlos en R.
+
+* Generar un objeto Summarized Experiment (Bioconductor).
+
+* Hacer una exploración inicial de los datos para detectar posibles puntos a tratar durante el preprocesado de los datos y evaluar las posibles diferencias entre los PDX.
+
+* Compartir el código y los resultados en  https://github.com/espelm/Lopez-Merino-Esperanza-PEC1 
+
+# Métodos
+
+Para realizar este trabajo hemos seleccionado el Dataset 2018-Phosphotroteomics del repositorio de github nutrimetabolomics/metaboData disponible en https://github.com/nutrimetabolomics/metaboData/tree/main/Datasets/2018-Phosphoproteomics. Se han seleccionado estos datos por un interés personal, ya que posiblemente en el futuro tendré que enfrentarme a estudios de este tipo.
+
+El análisis se ha llevado a cabo usando RStudio RStudio 2023.12.1+402. Para más información acerca del código y las librerias usadas, el código completo se encuentra disponible en el repositirio de github espelm/Lopez-Merino-Esperanza-PEC1. No obstante, destacar el uso de la librería SummarizedExperiment para estructurar los datos de fosfoproteómica. 
+
+Inicialmente se intentaron descargar los datos del repositorio al proyecto creado con git directamente desde R, no obstante, el fichero xlsx no se podía abrir. Para bypassear el problema decicidimos descargar manualmente los archivos. 
+
+```{r}
+#data_url <- "https://github.com/nutrimetabolomics/metaboData/blob/main/Datasets/2018-Phosphoproteomics/TIO2%2BPTYR-human-MSS%2BMSIvsPD.XLSX"
+#download.file(data_url, "phosphoproteomics_data.XLSX", mode = "wb", method = "wininet")
+#description_url <- "https://github.com/nutrimetabolomics/metaboData/blob/main/Datasets/2018-Phosphoproteomics/description.md"
+#download.file(description_url, "description.md", mode = "wb")
+```
+
+Como indicábamos, los datos proporcionados se encontraban en formato xlsx, correspondiéndose la primera pestaña a los datos en sí y la segunda a la información relativa a las muestras. Además venian acompañados de un pequeño archivo de descripción de los mismos (.md), donde se explica con más detalle su origen.  Una vez cargados los datos se exploraron brevemente y se pasó a crear el objeto Summarized Experiment. 
+
+Finalmente se hizo una breve exploración de los datos, identificando valores no asignados, 0 exactos y explorando brevemente las diferencias entre ambos grupos de PDX. 
+
+# Resultados
+
+El primer paso fue cargar los datos en RStudio. Para ello cargamos por un lado los datos de abundancia de cada phosphopéptido con su identificación. Separadamente cargamos la información de las muestras con sus fenótipos y sus réplicas técnicas. Para terminar cargamos la descripción del estudio. 
+
+```{r, results = FALSE, warning=FALSE, message=FALSE}
+phospho_data <- read_excel("phosphoproteomics_data.xlsx", sheet = "originalData")
+head(phospho_data)
+str(phospho_data)
+samples <- read_excel("phosphoproteomics_data.xlsx", sheet = "targets")
+head(samples)
+str(samples)
+description <- readLines("description.md")
+```
+
+Así, los datos muestran la abundancia de `r nrow(phospho_data)` péptidos en `r nrow(samples)` muestras. 
+Estas muestras se separan en 3 muestras por línea PDX con 2 réplicas técnicas cada una. 
+
+A continuación, pasamos a crear el objeto de la clase SummarizedExperiment. Para ello debemos quedarnos con los datos de los niveles de fosfopéptidos de las muestras (para filtrarlos, nos beneficiamos de que son las únicas columnas que empiezan por M o T). Además, creamos los metadatos de las muestras (nombre, grupo de tratamiento y réplica) y los metadatos de los péptidos identificados(péptido, accession number, descripción y score de la identificación del peptido). Finalmente, tomamos la descripción del experimento como metadatos del objeto.
+
+```{r}
+abundance_colums <- grep("^M|^T", colnames(phospho_data), value = TRUE)  #muestras
+abundance_data <- phospho_data[, abundance_colums]  #datos
+
+samples_metadata <- data.frame(
+  Sample = colnames(abundance_data),
+  Group = ifelse(grepl("^M1|^M5|^T49", colnames(abundance_data)), "MSS", "PD"),
+  Replicate = rep(c(1,2), times = 6),  # Dos réplicas por muestra
+  stringsAsFactors = FALSE)
+
+peptides_metadata <- data.frame(  #Metadatos de los peptidos identificados
+  Peptide = phospho_data$SequenceModifications,
+  Accession = phospho_data$Accession,
+  Description = phospho_data$Description,
+  Score = phospho_data$Score, 
+  stringsAsFactors = FALSE)
+
+phospho_se <- SummarizedExperiment(
+  assays = list(counts = as.matrix(abundance_data)),  # Datos de abundancia
+  colData = DataFrame(samples_metadata),  #Metadatos de las muestras
+  rowData = DataFrame(peptides_metadata),  # Metadatos de los peptidos identificados
+  metadata = description) #Metadatos del experimento
+
+```
+Una vez creado el objeto, lo exploramos brevemente. Por razones de longitud y claridad no imprimiremos todos los resultados del código. 
+
+```{r}
+summary(phospho_se)
+dim(phospho_se)
+colData(phospho_se)
+rowData(phospho_se)
+```
+```{r results = FALSE}
+metadata(phospho_se)
+```
+
+Una vez comprobado que el objeto SummarizedExperiment se ha creado correctamente, empezamos a explorar los datos para ver si es necesario hacer algún preprocesado antes de hacer el análisis estadístico (fuera de los objetivos de esta PEC). 
+
+Empezamos por hacer una representacion rápida de la abundancia de fosfopéptidos por muestra con un boxplot. 
+
+```{r, echo = FALSE}
+boxplot(assay(phospho_se), 
+        main = "Distribución de abundancias de péptidos en las muestras", 
+        las = 2,  # Rotar los nombres de las muestras
+        col = c(rep("skyblue", 6), rep("salmon", 6)),  
+        ylab = "Abundancia",
+        cex.axis = 0.6)
+      
+```
+Pudimos ver que hay bastanes puntos fuera de los bigotes  del boxplot (de hecho se ven ni las cajas ni los bigotes), lo que probablemente puedan ser outliers. Valdría la pena revisar si estos puntos se conservan en las replicas técnicas (en cuyo caso es más probable que representen variabilidad biológica) o bien puedan deberse a errores técnicos. Por ejemplo, en la primera muestra M1 del grupo MSS, el punto entorno a $4 x 10^7$ es sospechoso de ser un error técnico. 
+
+Aunque no es correcto, con fines exploratorios eliminamos los outliers para ver bien las cajas y los bigotes.
+
+```{r, echo = FALSE}
+boxplot(assay(phospho_se), 
+        main = "Distribución de abundancias de péptidos en las muestras", 
+        las = 2,  
+        col = c(rep("skyblue", 6), rep("salmon", 6)),  
+        ylab = "Abundancia",
+        cex.axis = 0.6,
+        outline = FALSE)
+      
+```
+
+Así pudimos ver que en general las muestras del grupo PD parecen tener más variabilidad y tal vez unos mayores niveles de fosfoproteínas (aunque las dos réplicas técnicas T49 del grupo MSS tienen una variabilidad parecida, lo que llama la atención además de que tienen una codificación distinta al resto -T y no M y una numeración alta-).
+
+Viendo estos datos decidimos representar la abundancia de los peptidos por tipo de PDX. 
+
+
+```{r, echo = FALSE}
+abundance_data <- assay(phospho_se)
+group_labels <- colData(phospho_se)$Group  
+mean_MSS <- rowMeans(abundance_data[, group_labels == "MSS"], na.rm = TRUE)
+mean_PD <- rowMeans(abundance_data[, group_labels == "PD"], na.rm = TRUE)
+mean_abundance <- data.frame(
+  MSS = mean_MSS,
+  PD = mean_PD)
+boxplot(mean_abundance, 
+        main = "Abundancias medias de péptidos en las muestras", 
+        col = c("skyblue","salmon"),  
+        ylab = "Abundancia",
+        cex.axis = 0.9,
+        outline = FALSE)
+```
+
+Comprobamos que la distribución de los datos no es normal (se ve que la distribución es asimétrica), pero aunque no es correcto hacerlo antes del preprocesado, no pudimos resistirnos a ver que efectivamente parece que SÍ hay diferencias entre los niveles globales de phosphoproteínas. IMPORTANTE, este análisis global no es concluyente hasta que no se repita con los datos filtrados.
+
+```{r}
+shapiro.test(mean_abundance$MSS)
+shapiro.test(mean_abundance$PD)
+wilcox.test(mean_abundance$MSS, mean_abundance$PD)
+```
+
+```{r,  include = FALSE}
+na_count <- sum(is.na(assay(phospho_se)))
+na_count
+cero_count <- sum(assay(phospho_se) == 0)
+cero_count
+total_count <- sum(assay(phospho_se))
+prop <- cero_count/total_count *100
+```
+Continuando con nuestra evaluación inicial de los datos, comprobamos que había `r na_count` *missing values*,  pero  `r cero_count` ceros exactos (de  `r total_count` medidas). 
+Esto puede ser tecnicamente incorrecto, ya que debemos poder diferenciar entre péptidos que se encuentran fosforilados a muy bajos niveles y péptidos que simplemente no hemos sido capaces de identificar en nuestras muestras. 
+
+Para terminar nuestra exploración, retomamos el tema de las réplicas técnicas y construimos una matriz de correlación.
+
+```{r, echo = FALSE}
+corr <- cor(assay(phospho_se), method = "pearson", use = "pairwise.complete.obs")
+corr
+```
+Así, es especialmente interesante fijarse en la correlación enre las réplicas técnicas. Dentro del grupo MSS, las réplicas técnicas de M1 muestran una correlación de 0.69, M5 0.99 y T49 0.91. Por su parte, los PDX PD muestran una correlación de 0.91 para M42, 0.74 para M43 y 0.71 para M64. 
+
+```{r, include = FALSE}
+save(phospho_se, file = "phospho_se.Rda") #objeto SummarizedExperiment
+write.csv(assay(phospho_se), file = "phospho_abundance_data.csv", row.names = FALSE) #datos texto csv
+write.table(as.data.frame(assay(phospho_se)), file = "phospho_abundance_data.txt", sep = "\t", quote = FALSE, row.names = FALSE) #datos texto  txt
+writeLines(unlist(metadata(phospho_se)) , "metadatos.md")  #metadatos experimento
+write.table(as.data.frame(colData(phospho_se)), file = "samples_metadata.md", sep = "\t", quote = FALSE, row.names = FALSE)  #metadatos muestras
+write.table(as.data.frame(rowData(phospho_se)), file = "peptides_metadata.md", sep = "\t", quote = FALSE, row.names = FALSE)  #metadatos  péptidos
+```
+
+# Discusión 
+
+En este trabajo hemos creado un objeto de la clase Summarized Experiment para los datos de un estudio de fosfoproteómica. El manejo del objeto en sí es bastante asequible. No obstante, en cuanto a la exploración y preprocesado de los datos debemos ser cautelosos.
+
+Es especialmente preocupante la baja reproducibilidad entre las réplicas técnicas (baja correlación), que está pro debajo del 75% en 3 de las muestras, la mitad. Considero que se debería establecer un criterio de reproducibilidad. Por ejemplo, en la actividad 1.3 de la asignatura vimos que para cada gen promediaban las réplicas técnicas A y B por separado y si mostraban una variación de más del 20% las eliminaban del estudio [@cui2006divergence]. Un criterio que vaya en esta línea debería establecerse en este estudio. Además, aunque en una proporción pequeña (`r prop` %), hemos visto que hay valores 0, pero ningún NA, lo que probablemente indique que si un péptido solo se identifica en un subgrupo de muestras al resto se les da un valor 0. Probablemente la mayoría de 0 desapareceran durante el preprocesado, pero habría que revisarlo. 
+
+Distinguir entre la variación biológica y la debida a artefactos técnicos es importante durante el preprocesado de los datos ya que en un análisis posterior puede afectar a un PCA o un ANOVA, que miden la varianza. De hecho, una vez fijado un criterio para excluir péptidos con alta variación artefactual sería interesante llevar a cabo estos análisis junto con un volcano plot para ver que péptidos están diferencialmente fosforilados. También sería interesante constatar si para las proteínas con varios sitios de de fosforilación todos ellos se encuentran fosforilados o solo algunos (implicaciones en regulación, señalización...) y finalmente,  usar herramientas como Gene Ontology para identificar que pathways pueden estar diferencialmente activados en  estos PDX, lo que puede ayudar a entender mejor los distintos tumores y a la larga acercarnos más a la medicina personalizada. 
+
+Por último, sería también interesante revisar los scores que se han obtenido para identificación de las proteínas a partir de los fosfopéptidos, especialmente para aquellas para las que se encuentren diferencias significativas. 
+
+
+# Conclusiones
+
+* Los objetos Summarized Experiment almacenan la información de los estudios ómicos de una forma clara y flexible, permitiendo tener por separado los datos, la información de las muestras y la información de las variables(péptidos, genes...). 
+
+* Es importante controlar la reproducibilidad técnica en los estudios ómicos durante el preprocesado de los datos. En este caso en concreto destacaremos: 
+
+  * Es necesario filtrar los 0 exactos si son un artefacto técnico (no se ha identificado el péptido).
+  
+  * Es importante establecer un criterio de reproducibilidad técnica y eliminar los fosfopéptidos con una alta variabilidad entre las réplicas (probablemente en algunos casos relacionado con el punto anterior).
+
+
+# References
+
+
+Código disponible en https://github.com/espelm/Lopez-Merino-Esperanza-PEC1
+
+Datos disponibles en https://github.com/nutrimetabolomics/metaboData/tree/main/Datasets/2018-Phosphoproteomics
