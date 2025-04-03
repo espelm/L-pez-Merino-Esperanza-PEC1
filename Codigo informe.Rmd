@@ -2,11 +2,7 @@
 title: "PEC1 Informe"
 author: "Esperanza López Merino"
 date: "2025-04-01"
-bibliography: bib.bib
-output:
-  pdf_document:
-    latex_engine: xelatex
-    toc: true
+
 ---
 
 ```{r setup, include=FALSE}
@@ -22,27 +18,7 @@ library(SummarizedExperiment)
 library(DESeq2)
 ```
 
-# Resumen
 
-En esta PEC hemos trabajado con unos datos de fosfoproteómica que, una vez nos hemos familiarizado brevemente con su estructura, hemos convertido en un objeto del tipo SummarizedExperiment. Una vez creado el objeto hemos hecho una exploración inicial de los datos identificando algunos puntos importantes a tener en cuenta durante el preprocesado. La mitad de las réplicas técnicas tienen una correlación superior al 90%, no obstante, la otra mitad muestra una correlación inferior al 75%.  En esta línea, parece haber también valores iguales al 0 exacto (aunque en una pequeña proporción), lo cual habría que revisar pues probablemente se deba a la técnica. Atajar estas cuestiones estableciendo criterios objetivos de filtrado es importante para asegurarnos de la fiabilidad de los resultados que se obtengan en análisis posteriores. 
-
-# Objetivos 
-
-El objetivo principal de este trabajo es hacer una exploración inicial de los datos de fosfoproteómica proporcionados para familiarizarse con Bioconductor, git y el manejo de este tipo de datos en R. No obstante, el objetivo principal del estudio era determinar si existen diferencias en los patrones de fosforilacion de dos modelos PDX (patient-derived xenograft) derivados de tumores humanos, los cuales pueden ser una nueva aproximación en la terapia del cancer [@liu2023patient]. Con esto, planteamos los siguientes objetivos especificos: 
-
-* Obtener los ficheros y cargarlos en R.
-
-* Generar un objeto Summarized Experiment (Bioconductor).
-
-* Hacer una exploración inicial de los datos para detectar posibles puntos a tratar durante el preprocesado de los datos y evaluar las posibles diferencias entre los PDX.
-
-* Compartir el código y los resultados en  https://github.com/espelm/Lopez-Merino-Esperanza-PEC1 
-
-# Métodos
-
-Para realizar este trabajo hemos seleccionado el Dataset 2018-Phosphotroteomics del repositorio de github nutrimetabolomics/metaboData disponible en https://github.com/nutrimetabolomics/metaboData/tree/main/Datasets/2018-Phosphoproteomics. Se han seleccionado estos datos por un interés personal, ya que posiblemente en el futuro tendré que enfrentarme a estudios de este tipo.
-
-El análisis se ha llevado a cabo usando RStudio RStudio 2023.12.1+402. Para más información acerca del código y las librerias usadas, el código completo se encuentra disponible en el repositirio de github espelm/Lopez-Merino-Esperanza-PEC1. No obstante, destacar el uso de la librería SummarizedExperiment para estructurar los datos de fosfoproteómica. 
 
 Inicialmente se intentaron descargar los datos del repositorio al proyecto creado con git directamente desde R, no obstante, el fichero xlsx no se podía abrir. Para bypassear el problema decicidimos descargar manualmente los archivos. 
 
@@ -53,9 +29,6 @@ Inicialmente se intentaron descargar los datos del repositorio al proyecto cread
 #download.file(description_url, "description.md", mode = "wb")
 ```
 
-Como indicábamos, los datos proporcionados se encontraban en formato xlsx, correspondiéndose la primera pestaña a los datos en sí y la segunda a la información relativa a las muestras. Además venian acompañados de un pequeño archivo de descripción de los mismos (.md), donde se explica con más detalle su origen.  Una vez cargados los datos se exploraron brevemente y se pasó a crear el objeto Summarized Experiment. 
-
-Finalmente se hizo una breve exploración de los datos, identificando valores no asignados, 0 exactos y explorando brevemente las diferencias entre ambos grupos de PDX. 
 
 # Resultados
 
@@ -197,31 +170,3 @@ write.table(as.data.frame(colData(phospho_se)), file = "samples_metadata.md", se
 write.table(as.data.frame(rowData(phospho_se)), file = "peptides_metadata.md", sep = "\t", quote = FALSE, row.names = FALSE)  #metadatos  péptidos
 ```
 
-# Discusión 
-
-En este trabajo hemos creado un objeto de la clase Summarized Experiment para los datos de un estudio de fosfoproteómica. El manejo del objeto en sí es bastante asequible. No obstante, en cuanto a la exploración y preprocesado de los datos debemos ser cautelosos.
-
-Es especialmente preocupante la baja reproducibilidad entre las réplicas técnicas (baja correlación), que está pro debajo del 75% en 3 de las muestras, la mitad. Considero que se debería establecer un criterio de reproducibilidad. Por ejemplo, en la actividad 1.3 de la asignatura vimos que para cada gen promediaban las réplicas técnicas A y B por separado y si mostraban una variación de más del 20% las eliminaban del estudio [@cui2006divergence]. Un criterio que vaya en esta línea debería establecerse en este estudio. Además, aunque en una proporción pequeña (`r prop` %), hemos visto que hay valores 0, pero ningún NA, lo que probablemente indique que si un péptido solo se identifica en un subgrupo de muestras al resto se les da un valor 0. Probablemente la mayoría de 0 desapareceran durante el preprocesado, pero habría que revisarlo. 
-
-Distinguir entre la variación biológica y la debida a artefactos técnicos es importante durante el preprocesado de los datos ya que en un análisis posterior puede afectar a un PCA o un ANOVA, que miden la varianza. De hecho, una vez fijado un criterio para excluir péptidos con alta variación artefactual sería interesante llevar a cabo estos análisis junto con un volcano plot para ver que péptidos están diferencialmente fosforilados. También sería interesante constatar si para las proteínas con varios sitios de de fosforilación todos ellos se encuentran fosforilados o solo algunos (implicaciones en regulación, señalización...) y finalmente,  usar herramientas como Gene Ontology para identificar que pathways pueden estar diferencialmente activados en  estos PDX, lo que puede ayudar a entender mejor los distintos tumores y a la larga acercarnos más a la medicina personalizada. 
-
-Por último, sería también interesante revisar los scores que se han obtenido para identificación de las proteínas a partir de los fosfopéptidos, especialmente para aquellas para las que se encuentren diferencias significativas. 
-
-
-# Conclusiones
-
-* Los objetos Summarized Experiment almacenan la información de los estudios ómicos de una forma clara y flexible, permitiendo tener por separado los datos, la información de las muestras y la información de las variables(péptidos, genes...). 
-
-* Es importante controlar la reproducibilidad técnica en los estudios ómicos durante el preprocesado de los datos. En este caso en concreto destacaremos: 
-
-  * Es necesario filtrar los 0 exactos si son un artefacto técnico (no se ha identificado el péptido).
-  
-  * Es importante establecer un criterio de reproducibilidad técnica y eliminar los fosfopéptidos con una alta variabilidad entre las réplicas (probablemente en algunos casos relacionado con el punto anterior).
-
-
-# References
-
-
-Código disponible en https://github.com/espelm/Lopez-Merino-Esperanza-PEC1
-
-Datos disponibles en https://github.com/nutrimetabolomics/metaboData/tree/main/Datasets/2018-Phosphoproteomics
